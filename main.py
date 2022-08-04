@@ -3,38 +3,49 @@ import time
 import random
 import re
 
-
 '''
-GAME:
-	wsad	: move
-	up,left.: change direction
-	q		: remove block
-	e 		: put block
-	r 		: open the bag
-	Tab		: start text
-TEXT:
-	up,down	: look at history
-	::::::::: Enter content and click on return can send message
-BAG:
-	up,down	: look for thing
-	enter 	: choose
+MATERIAL:
 
+WOOD
+STONE
+IRON
+
+PROPERTIES:
+
+durable - 100 ~ ***
+destory - 1 ~ ***
 '''
 
 '''
-INFACT:80(Don't worry,it won't disturb you)
-.-------------------------------.
-|								|\n
-|								|\n
-|								|\n
-|								|\n
-|		   	  Y(0,0)			|\n GAMESCREEN_Y:23
-|		   -gamescreen-			|\n
-|								|\n
-|								|\n
-|								|\n
-`-------------------------------`\n
-		 GAMESCREEN_X:79
+	GAME:
+		wsad	: move
+		up,left.: change direction
+		q		: remove block
+		e 		: put block
+		r 		: open the bag
+		Tab		: start text
+	TEXT:
+		up,down	: look at history
+		::::::::: Enter content and click on return can send message
+	BAG:
+		up,down	: look for thing
+		enter 	: choose
+'''
+
+'''
+	INFACT:80(Don't worry,it won't disturb you)
+	.-------------------------------.
+	|								|\n
+	|								|\n
+	|								|\n
+	|								|\n
+	|		   	  Y(0,0)			|\n GAMESCREEN_Y:23
+	|		   -gamescreen-			|\n
+	|								|\n
+	|								|\n
+	|								|\n
+	`-------------------------------`\n
+			 GAMESCREEN_X:79
 '''
 
 GAMESCREEN_X,GAMESCREEN_Y = 79,23
@@ -54,34 +65,51 @@ class BaseCharacter:
 		self.attr = attr
 
 class BuiltBlock(BaseCharacter):
-	def __init__(self,char,name,ifthrough,posx=None,posy=None,attr=None):
+	def __init__(self,char,name,ifthrough,durable,posx=None,posy=None,attr=None):
 		BaseCharacter.__init__(self,char,name,attr)
 		self.ifthrough = ifthrough
+		self._durable = durable
 		self.posx = posx
 		self.posy = posy
+		self.durable = self._durable
 
-class UseThing(BaseCharacter):
-	def __init__(self,char,name,attr=None):
-		BaseCharacter.__init__(self,char,name,attr)
+	@ property
+	def describe(self):
+		return f"{self.name} {round((self.durable/self._durable)*100)}%" 
 
-class Word(BaseCharacter):
-	def __init__(self,char,name=None,attr=None):
-		BaseCharacter.__init__(self,
-			char=char,
-			name=name,
-			attr=attr)
+class Tool(BaseCharacter):
+	def __init__(self,char,name,durable,destroy):
+		BaseCharacter.__init__(self,char,name,attr=curses.A_BLINK)
+		self._durable = durable
+		self.destroy = destroy
+		self.durable = self._durable
 
-class Null(UseThing):
+	@ property
+	def describe(self):
+		return f"{self.name} {round((self.durable/self._durable)*100)}% {self.destroy}" 
+
+class Null(Tool):
 	def __init__(self):
-		UseThing.__init__(self,
+		Tool.__init__(self,
 			char=" ",
-			name="Null")
+			name="Null",
+			durable=True,
+			destroy=1)
+
+class WoodHammer(Tool):
+	def __init__(self):
+		Tool.__init__(self,
+			char="T",
+			name="WoodHammer",
+			durable=100,
+			destroy=5)
 
 class WoodWall(BuiltBlock):
 	def __init__(self,posx=None,posy=None):
 		BuiltBlock.__init__(self,
 			char="#",
 			name="WoodWall",
+			durable=100,
 			ifthrough=False,
 			posx=posx,
 			posy=posy)
@@ -91,6 +119,7 @@ class StoneWall(BuiltBlock):
 		BuiltBlock.__init__(self,
 			char="#",
 			name="StoneWall",
+			durable=250,
 			ifthrough=False,
 			posx=posx,
 			posy=posy)
@@ -100,6 +129,7 @@ class WoodDoor(BuiltBlock):
 		BuiltBlock.__init__(self,
 			char="-",
 			name="WoodDoor",
+			durable=120,
 			ifthrough=True,
 			posx=posx,
 			posy=posy,
@@ -107,14 +137,14 @@ class WoodDoor(BuiltBlock):
 			)
 
 class Player(BaseCharacter):
-	def __init__(self,posx,posy,name):
+	def __init__(self,name):
 		BaseCharacter.__init__(self,char="Y",name=name,attr=None)
-		self.posx = posx
-		self.posy = posy
+		self.posx = 0
+		self.posy = 0
 		self.direction = ""
 		self.on = None
 		self.point = None
-		self.bag = [Null,StoneWall,WoodDoor]
+		self.bag = [Null(),WoodHammer(),StoneWall,WoodWall,WoodDoor]
 		self.hand = self.bag[0]
 
 class Screen:
@@ -134,8 +164,6 @@ class Screen:
 	def show(self,update_c):
 		# Basic: clear -> update -> refresh -> getkey -> handle key
 
-		# clear
-		self.stdscr.clear()
 		'''
 		Tip: the result of the game.update() is a list.
 		It looks like:
@@ -152,6 +180,9 @@ class Screen:
 
 		# update
 		update_c = update_c
+		length = len(update_c)-1
+		# clear
+		self.stdscr.clear()
 		for index,y in enumerate(update_c):
 			for x in y:
 				if str(type(x)) == "<class 'str'>":
@@ -160,7 +191,7 @@ class Screen:
 					self.stdscr.addch(x.char,x.attr)
 				else:
 					self.stdscr.addch(x.char)
-			if index != len(update_c)-1:
+			if index != length:
 				self.stdscr.addch("\n")
 
 		# refresh
@@ -175,19 +206,22 @@ class Game:
 	
 		self.blocks = [] # all blocks
 		self._mode = "game" # game,text
-		self._randomhouse = []
 		self._promptlist = []
 		self._enterlist = []
 
-		self.player = Player(0,0,"light")
-		self.buildhouse(WoodWall,(-1,-1),(-18,-15))
-		self.buildhouse(StoneWall,(10,4),(20,-14))
+		# //
+		self.player = Player("light")
+		self.buildhouse(WoodWall,WoodDoor,(-1,-1),(-18,-15))
+		self.buildhouse(StoneWall,None,(10,4),(20,-14))
+		# //
 
 	# run : update & show it on the screen
 	def run_forever(self):
 		while is_running:
+			curses.flushinp()
 			key = self.screen.show(self.update())
 			self.keyhandle(key)
+			curses.napms(24)
 
 		# Return the original statu
 		curses.nocbreak()
@@ -239,58 +273,62 @@ class Game:
 
 			if ordkey == 259: # UP
 				self.player.direction = "up"
-
+				thingpos = (self.player.posx,self.player.posy+1)
 			elif ordkey == 258: # DOWN
 				self.player.direction = "down"
-
+				thingpos = (self.player.posx,self.player.posy-1)
 			elif ordkey == 260: # LEFT
 				self.player.direction = "left"
-			
+				thingpos = (self.player.posx-1,self.player.posy)
 			elif ordkey == 261: # RIGHT
 				self.player.direction = "right"	
-			
-			elif ordkey == 9: # Tab
-				self._mode = "text"
-				self._textindex = 0
+				thingpos = (self.player.posx+1,self.player.posy)
+			else:
+				thingpos = None
 
-			elif ordkey == ord("r"):
-				self._mode = "bag"
-				self._bagindex = 0
-				self._bagpoint = 0
-
-			elif ordkey == ord("e") or ordkey == ord("q"):
+			# :pos:put thing
+			if thingpos != None:
 				thing = self.player.hand
-
-				if self.player.direction == "up":
-					thingpos = (self.player.posx,self.player.posy+1)
-				elif self.player.direction == "down":
-					thingpos = (self.player.posx,self.player.posy-1)
-				elif self.player.direction == "left":
-					thingpos = (self.player.posx-1,self.player.posy)
-				elif self.player.direction == "right":
-					thingpos = (self.player.posx+1,self.player.posy)
-				else:
-					thingpos = None
-					self.prompt("* How to know where to put thing")
-
-				if ordkey == ord("e"):
+				if str(type(thing)) == "<class 'type'>":
 					if (thingpos != None) and \
 						(issubclass(thing,BuiltBlock)) and \
 						(thingpos not in [(block.posx,block.posy) for block in self.blocks]):
 						self.blocks.append(thing(*thingpos))
 					else:
 						self.prompt(f"* Put failed")
+				else:
+					self.prompt(f"* Put failed")
 
-				elif ordkey == ord("q"):
-					for block in self.blocks:
-						if (block.posx,block.posy) == thingpos:
-							self.blocks.remove(block)
-							break
-					else:
-						self.prompt(f"* Remove failed")
+			if ordkey == 9: # Tab
+				self._mode = "text"
+				self._textindex = 0
 
+			elif ordkey == ord("e"):
+				self._mode = "bag"
+				self._bagindex = 0
+				self._bagpoint = 0
 
-		# mode:text
+			elif ordkey == ord("q"):
+				if self.player.direction == "up":
+					thingpos = (self.player.posx,self.player.posy+1)
+				elif self.player.direction == "down": # DOWN
+					thingpos = (self.player.posx,self.player.posy-1)
+				elif self.player.direction == "left": # LEFT
+					thingpos = (self.player.posx-1,self.player.posy)
+				elif self.player.direction == "right": # RIGHT
+					thingpos = (self.player.posx+1,self.player.posy)
+				else:
+					thingpos = None
+				for block in self.blocks:
+					if (block.posx,block.posy) == thingpos:
+						if hasattr(self.player.hand,"destroy"):
+							block.durable -= self.player.hand.destroy
+							if block.durable <= 0:
+								self.blocks.remove(block)
+								self.player.point = None
+						break
+
+		# :pos:text
 		elif self._mode == "text":
 			if ordkey == 9: # Tab
 				self._mode = "game"
@@ -319,7 +357,7 @@ class Game:
 				self._enterlist.append(chr(ordkey))
 
 		elif self._mode == "bag":
-			if ordkey == ord("r"):
+			if ordkey == ord("e"):
 				self._mode = "game"
 
 			elif ordkey == 259: # UP
@@ -338,7 +376,6 @@ class Game:
 				self.player.hand = self.player.bag[self._bagpoint]
 				self._mode = "game"
 
-
 	# update the content,return the content
 	def update(self):
 		up = self.player.posy + 11
@@ -356,20 +393,20 @@ class Game:
 
 		gamescreen[tosidey][tosidex] = self.player
 
-		# prompt
+		# :pos:prompt
 		if self._mode != "text":
 			num = 3
 			for index,text in enumerate(self._promptlist[::-1]):
 				if index < num:
-					gamescreen[-(index+1)][:len(text)] = [Word(c) for c in text]
+					gamescreen[-(index+1)][:len(text)] = [BaseCharacter(char=c,name=None,attr=None) for c in text]
 		else:
 			num = 10
 			for index,text in enumerate(self._promptlist[::-1][self._textindex:]):
 				if index < num:
-					gamescreen[-(index+1)-1][:len(text)] = [Word(c) for c in text]
-			gamescreen[-1][:len(self._enterlist)] = [Word(c) for c in self._enterlist]
+					gamescreen[-(index+1)-1][:len(text)] = [BaseCharacter(char=c,name=None,attr=None) for c in text]
+			gamescreen[-1][:len(self._enterlist)] = [BaseCharacter(char=c,name=None,attr=None) for c in self._enterlist]
 
-		# statu
+		# :pos:statu
 		_statu = []
 		if self._mode != "bag":
 			'''
@@ -383,17 +420,20 @@ class Game:
 			_statu.append(f"Pos:{self.player.posx},{self.player.posy}")
 			_statu.append(f"Direction:{self.player.direction}")
 			if self.player.on != None:
-				on = self.player.on.name 
+				on = self.player.on.describe 
 			else:
 				on = ""
 			_statu.append(f"On:{on}")
 			if self.player.point != None:
-				point = self.player.point.name 
+				point = self.player.point.describe 
 			else:
 				point = ""
 			_statu.append(f"Point:{point}")
 			if self.player.hand != None:
-				hand = self.player.hand.__name__
+				if str(type(self.player.hand)) == "<class 'type'>":
+					hand = self.player.hand.__name__
+				else:
+					hand = self.player.hand.describe
 			else:
 				hand = ""
 			_statu.append(f"Hand:{hand}")
@@ -412,13 +452,17 @@ class Game:
 			_statu.append(f" ")
 			for index,thing in enumerate(self.player.bag[self._bagindex:]):
 				if index < 6:
-					if index+self._bagindex == self._bagpoint:
-						_statu.append(f"<{index+self._bagindex}> {thing.__name__}")
+					if str(type(thing)) == "<class 'type'>":
+						name = thing.__name__
 					else:
-						_statu.append(f"{index+self._bagindex} {thing.__name__}")
+						name = thing.describe
+					if index+self._bagindex == self._bagpoint:
+						_statu.append(f"<{index+self._bagindex}> {name}")
+					else:
+						_statu.append(f"{index+self._bagindex} {name}")
 
 		for index,element in enumerate(_statu):
-			gamescreen[index][:len(element)] = [Word(c) for c in element]
+			gamescreen[index][:len(element)] = [BaseCharacter(char=c,name=None,attr=None) for c in element]
 
 		return gamescreen
 
@@ -433,6 +477,7 @@ class Game:
 	# a function to build house
 	def buildhouse(self,
 		wallmaterial,
+		doormaterial,
 		originpeer:tuple,
 		targetpeer:tuple):
 		ax,ay = originpeer[0],originpeer[1]
@@ -451,12 +496,20 @@ class Game:
 		doorpos = random.choice(allpeer)
 		allpeer.remove(doorpos)
 
+		allpeer.extend([
+			(max(ax,bx),max(ay,by)),
+			(max(ax,bx),min(ay,by)),
+			(min(ax,bx),max(ay,by)),
+			(min(ax,bx),min(ay,by))
+			])
+
 		# bulid walls
 		for peerx,peery in allpeer:
 			self.blocks.append(wallmaterial(posx=peerx,posy=peery))
 
 		# build door
-		self.blocks.append(WoodDoor(doorpos[0],doorpos[1]))
+		if doormaterial != None:
+			self.blocks.append(doormaterial(doorpos[0],doorpos[1]))
 
 	# handle text user types
 	def handletext(self,text):
