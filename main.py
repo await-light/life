@@ -2,6 +2,7 @@ import curses
 import time
 import random
 import re
+from collections import Counter
 
 '''
 MATERIAL:
@@ -51,6 +52,7 @@ destory - 1 ~ ***
 GAMESCREEN_X,GAMESCREEN_Y = 79,23
 is_running = True
 
+
 class BaseCharacter:
 	'''
 	All the character should dpend on this class
@@ -65,7 +67,14 @@ class BaseCharacter:
 		self.attr = attr
 
 class BuiltBlock(BaseCharacter):
-	def __init__(self,char,name,ifthrough,durable,posx=None,posy=None,attr=None):
+	def __init__(self,
+		char,
+		name,
+		ifthrough,
+		durable,
+		posx=None,
+		posy=None,
+		attr=None):
 		BaseCharacter.__init__(self,char,name,attr)
 		self.ifthrough = ifthrough
 		self._durable = durable
@@ -86,7 +95,22 @@ class Tool(BaseCharacter):
 
 	@ property
 	def describe(self):
-		return f"{self.name} {round((self.durable/self._durable)*100)}% {self.destroy}" 
+		return f"{self.name} {round((self.durable/self._durable)*100)}%" 
+
+class Player(BaseCharacter):
+	def __init__(self,name):
+		BaseCharacter.__init__(self,char="Y",name=name,attr=None)
+		self.posx = 0
+		self.posy = 0
+		self.direction = ""
+		self.on = None
+		self.point = None
+		self.bag = [Null(),WoodHammer(),StoneWall,WoodWall,WoodDoor,WoodDoor]
+		self.hand = self.bag[0]
+
+	@property
+	def bagset(self):
+		return list(set(self.bag))
 
 class Null(Tool):
 	def __init__(self):
@@ -136,17 +160,6 @@ class WoodDoor(BuiltBlock):
 			attr=curses.A_DIM,
 			)
 
-class Player(BaseCharacter):
-	def __init__(self,name):
-		BaseCharacter.__init__(self,char="Y",name=name,attr=None)
-		self.posx = 0
-		self.posy = 0
-		self.direction = ""
-		self.on = None
-		self.point = None
-		self.bag = [Null(),WoodHammer(),StoneWall,WoodWall,WoodDoor]
-		self.hand = self.bag[0]
-
 class Screen:
 	'''
 	This control the screen,
@@ -182,7 +195,7 @@ class Screen:
 		update_c = update_c
 		length = len(update_c)-1
 		# clear
-		self.stdscr.clear()
+		self.stdscr.erase()
 		for index,y in enumerate(update_c):
 			for x in y:
 				if str(type(x)) == "<class 'str'>":
@@ -211,17 +224,18 @@ class Game:
 
 		# //
 		self.player = Player("light")
-		self.buildhouse(WoodWall,WoodDoor,(-1,-1),(-18,-15))
-		self.buildhouse(StoneWall,None,(10,4),(20,-14))
+		self.buildhouse(WoodWall,WoodDoor,(-1,-1),(-8,-8))
+		self.buildhouse(StoneWall,None,(10,4),(5,-10))
 		# //
 
 	# run : update & show it on the screen
 	def run_forever(self):
 		while is_running:
-			curses.flushinp()
-			key = self.screen.show(self.update())
+			updatec = self.update()
+			key = self.screen.show(updatec)
 			self.keyhandle(key)
-			curses.napms(24)
+			curses.napms(22)
+			curses.flushinp()
 
 		# Return the original statu
 		curses.nocbreak()
@@ -238,6 +252,7 @@ class Game:
 
 		# mode:game
 		if self._mode == "game":
+			# :pos:move
 			movex,movey = 0,0
 			if ordkey == ord("w"): # UP
 				movey = 1
@@ -270,7 +285,8 @@ class Game:
 					elif (block.posx == self.player.posx) and \
 						(block.posy == self.player.posy):
 						self.player.on = block
-
+			
+			# :pos:put thing
 			if ordkey == 259: # UP
 				self.player.direction = "up"
 				thingpos = (self.player.posx,self.player.posy+1)
@@ -286,28 +302,36 @@ class Game:
 			else:
 				thingpos = None
 
-			# :pos:put thing
 			if thingpos != None:
-				thing = self.player.hand
-				if str(type(thing)) == "<class 'type'>":
-					if (thingpos != None) and \
-						(issubclass(thing,BuiltBlock)) and \
-						(thingpos not in [(block.posx,block.posy) for block in self.blocks]):
-						self.blocks.append(thing(*thingpos))
-					else:
-						self.prompt(f"* Put failed")
+				if (thingpos not in [(block.posx,block.posy) for block in self.blocks]):
+					thing = self.player.hand
+					if str(type(thing)) == "<class 'type'>":
+						if (thingpos != None) and \
+							(issubclass(thing,BuiltBlock)):
+							self.blocks.append(thing(*thingpos))
+							self.player.bag.remove(thing)
+							self.player.hand = self.player.bag[0]
 				else:
-					self.prompt(f"* Put failed")
+					for block in self.blocks:
+						if (block.posx,block.posy) == thingpos:
+							self.player.point = block
+							break
 
 			if ordkey == 9: # Tab
 				self._mode = "text"
 				self._textindex = 0
 
+			# :pos:bag
 			elif ordkey == ord("e"):
 				self._mode = "bag"
 				self._bagindex = 0
-				self._bagpoint = 0
+				for index,thing in enumerate(self.player.bagset):
+					if thing == self.player.hand:
+						self._bagpoint = index
+				else:
+					self._bagpoint = 0
 
+			# :pos:remove
 			elif ordkey == ord("q"):
 				if self.player.direction == "up":
 					thingpos = (self.player.posx,self.player.posy+1)
@@ -322,10 +346,20 @@ class Game:
 				for block in self.blocks:
 					if (block.posx,block.posy) == thingpos:
 						if hasattr(self.player.hand,"destroy"):
-							block.durable -= self.player.hand.destroy
-							if block.durable <= 0:
-								self.blocks.remove(block)
-								self.player.point = None
+							destroyvalue = self.player.hand.destroy
+							if not isinstance(self.player.hand.durable,bool):
+								self.player.hand.durable -= 0.09
+								if self.player.hand.durable <= 0:
+									self.prompt(f"{self.player.hand.name} is broken")
+									self.player.bag.remove(self.player.hand)
+									self.player.hand = self.player.bag[0]
+						else:
+							destroyvalue = self.player.bag[0].destroy
+						block.durable -= destroyvalue
+						if block.durable <= 0:
+							self.blocks.remove(block)
+							self.player.bag.append(block)
+							self.player.point = None
 						break
 
 		# :pos:text
@@ -356,6 +390,7 @@ class Game:
 			elif ordkey >= 32 and ordkey <= 126 and len(self._enterlist) < 79:
 				self._enterlist.append(chr(ordkey))
 
+		# :pos:bag
 		elif self._mode == "bag":
 			if ordkey == ord("e"):
 				self._mode = "game"
@@ -367,13 +402,13 @@ class Game:
 					self._bagpoint -= 1
 				
 			elif ordkey == 258: # DOWN
-				if len(self.player.bag[self._bagindex:]) > 6:
+				if len(self.player.bagset[self._bagindex:]) > 6:
 					self._bagindex += 1 
-				if self._bagpoint < len(self.player.bag)-1:
+				if self._bagpoint < len(self.player.bagset)-1:
 					self._bagpoint += 1
 
 			elif ordkey == 10:
-				self.player.hand = self.player.bag[self._bagpoint]
+				self.player.hand = self.player.bagset[self._bagpoint]
 				self._mode = "game"
 
 	# update the content,return the content
@@ -450,7 +485,7 @@ class Game:
 			_statu.append(f"Mode:{self._mode}")
 			_statu.append(f"'Key_UP' or 'Key_DOWN'.'Enter' to choose.")
 			_statu.append(f" ")
-			for index,thing in enumerate(self.player.bag[self._bagindex:]):
+			for index,thing in enumerate(self.player.bagset[self._bagindex:]):
 				if index < 6:
 					if str(type(thing)) == "<class 'type'>":
 						name = thing.__name__
